@@ -22949,10 +22949,12 @@ static const struct snd_kcontrol_new sco_slim7_switch_mixer_controls =
 	0, 1, 0, msm_routing_sco_switch_mixer_get,
 	msm_routing_sco_switch_mixer_put);
 
+#ifndef CONFIG_TDM_DISABLE
 static const struct snd_kcontrol_new tert_tdm_rx_switch_mixer_controls =
 	SOC_SINGLE_EXT("Switch", SND_SOC_NOPM,
 		0, 1, 0, msm_routing_get_tert_tdm_switch_mixer,
 		msm_routing_put_tert_tdm_switch_mixer);
+#endif
 
 static const struct soc_enum lsm_port_enum =
 	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(lsm_port_text), lsm_port_text);

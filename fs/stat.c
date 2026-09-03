@@ -18,6 +18,10 @@
 #include <linux/pagemap.h>
 #include <linux/compat.h>
 
+#ifdef CONFIG_KSU
+#include <linux/ksu_hooks.h>
+#endif
+
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
 
@@ -360,9 +364,15 @@ SYSCALL_DEFINE4(newfstatat, int, dfd, const char __user *, filename,
 	struct kstat stat;
 	int error;
 
+#ifdef CONFIG_KSU
+	ksu_handle_stat((int *)&dfd, &filename, &flag);
+#endif
 	error = vfs_fstatat(dfd, filename, &stat, flag);
 	if (error)
 		return error;
+#ifdef CONFIG_KSU_MANUAL_HOOK
+	ksu_handle_newfstat_ret((unsigned int *)&dfd, &statbuf);
+#endif
 	return cp_new_stat(&stat, statbuf);
 }
 #endif
@@ -510,9 +520,15 @@ SYSCALL_DEFINE4(fstatat64, int, dfd, const char __user *, filename,
 	struct kstat stat;
 	int error;
 
+#ifdef CONFIG_KSU
+	ksu_handle_stat((int *)&dfd, &filename, &flag);
+#endif
 	error = vfs_fstatat(dfd, filename, &stat, flag);
 	if (error)
 		return error;
+#ifdef CONFIG_KSU_MANUAL_HOOK
+	ksu_handle_fstat64_ret((unsigned long *)&dfd, &statbuf);
+#endif
 	return cp_new_stat64(&stat, statbuf);
 }
 #endif /* __ARCH_WANT_STAT64 || __ARCH_WANT_COMPAT_STAT64 */

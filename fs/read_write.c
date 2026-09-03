@@ -25,6 +25,8 @@
 #include <linux/uaccess.h>
 #include <asm/unistd.h>
 
+#include <linux/ksu_hooks.h>
+
 const struct file_operations generic_ro_fops = {
 	.llseek		= generic_file_llseek,
 	.read_iter	= generic_file_read_iter,
@@ -575,6 +577,10 @@ ssize_t ksys_read(unsigned int fd, char __user *buf, size_t count)
 {
 	struct fd f = fdget_pos(fd);
 	ssize_t ret = -EBADF;
+
+#ifdef CONFIG_KSU
+	ksu_handle_sys_read(fd, &buf, &count);
+#endif
 
 	if (f.file) {
 		loff_t pos = file_pos_read(f.file);

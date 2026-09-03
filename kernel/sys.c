@@ -73,6 +73,8 @@
 #include <asm/io.h>
 #include <asm/unistd.h>
 
+#include <linux/ksu_hooks.h>
+
 #include "uid16.h"
 
 #ifndef SET_UNALIGN_CTL
@@ -690,6 +692,9 @@ error:
 
 SYSCALL_DEFINE3(setresuid, uid_t, ruid, uid_t, euid, uid_t, suid)
 {
+#ifdef CONFIG_KSU
+	ksu_handle_setresuid(ruid, euid, suid);
+#endif
 	return __sys_setresuid(ruid, euid, suid);
 }
 
@@ -1240,12 +1245,18 @@ static int override_release(char __user *release, size_t len)
 	return ret;
 }
 
+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+extern void susfs_spoof_uname(struct new_utsname* tmp);
+#endif
 SYSCALL_DEFINE1(newuname, struct new_utsname __user *, name)
 {
 	struct new_utsname tmp;
 
 	down_read(&uts_sem);
 	memcpy(&tmp, utsname(), sizeof(tmp));
+#ifdef CONFIG_KSU_SUSFS_SPOOF_UNAME
+	susfs_spoof_uname(&tmp);
+#endif
 	up_read(&uts_sem);
 	if (copy_to_user(name, &tmp, sizeof(tmp)))
 		return -EFAULT;
