@@ -34,7 +34,9 @@ enum {
 /*
  * 8 best effort priority levels are supported
  */
-#define IOPRIO_BE_NR	(8)
+#define IOPRIO_BE_NR		(8)
+#define IOPRIO_NR_LEVELS	8
+#define IOPRIO_BE_NORM		IOPRIO_NORM
 
 enum {
 	IOPRIO_WHO_PROCESS = 1,
