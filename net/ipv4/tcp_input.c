@@ -298,7 +298,7 @@ static void tcp_incr_quickack(struct sock *sk, unsigned int max_quickacks)
 		icsk->icsk_ack.quick = quickacks;
 }
 
-static void tcp_enter_quickack_mode(struct sock *sk, unsigned int max_quickacks)
+void tcp_enter_quickack_mode(struct sock *sk, unsigned int max_quickacks)
 {
 	struct inet_connection_sock *icsk = inet_csk(sk);
 
@@ -359,7 +359,8 @@ static void __tcp_ecn_check_ce(struct sock *sk, const struct sk_buff *skb)
 			tcp_enter_quickack_mode(sk, 2);
 		break;
 	case INET_ECN_CE:
-		if (tcp_ca_needs_ecn(sk))
+		if (tcp_ca_needs_ecn(sk) ||
+		    (inet_csk(sk)->icsk_ca_ops->flags & TCP_CONG_WANTS_CE_EVENTS))
 			tcp_ca_event(sk, CA_EVENT_ECN_IS_CE);
 
 		if (!(tp->ecn_flags & TCP_ECN_DEMAND_CWR)) {
@@ -1002,11 +1003,15 @@ static void tcp_verify_retransmit_hint(struct tcp_sock *tp, struct sk_buff *skb)
  */
 static void tcp_sum_lost(struct tcp_sock *tp, struct sk_buff *skb)
 {
+	struct sock *sk = (struct sock *)tp;
 	__u8 sacked = TCP_SKB_CB(skb)->sacked;
 
 	if (!(sacked & TCPCB_LOST) ||
-	    ((sacked & TCPCB_LOST) && (sacked & TCPCB_SACKED_RETRANS)))
+	    ((sacked & TCPCB_LOST) && (sacked & TCPCB_SACKED_RETRANS))) {
 		tp->lost += tcp_skb_pcount(skb);
+		if (inet_csk(sk)->icsk_ca_ops->skb_marked_lost)
+			inet_csk(sk)->icsk_ca_ops->skb_marked_lost(sk, skb);
+	}
 }
 
 static void tcp_skb_mark_lost(struct tcp_sock *tp, struct sk_buff *skb)
@@ -3849,6 +3854,7 @@ static int tcp_ack(struct sock *sk, const struct sk_buff *skb, int flag)
 	delivered = tcp_newly_delivered(sk, delivered, flag);
 	lost = tp->lost - lost;			/* freshly marked lost */
 	rs.is_ack_delayed = !!(flag & FLAG_ACK_MAYBE_DELAYED);
+	rs.is_ece = !!(flag & FLAG_ECE);
 	tcp_rate_gen(sk, delivered, lost, is_sack_reneg, sack_state.rate);
 	tcp_cong_control(sk, ack, delivered, flag, sack_state.rate);
 	tcp_xmit_recovery(sk, rexmit);

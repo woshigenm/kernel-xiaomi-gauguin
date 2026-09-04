@@ -387,6 +387,9 @@ static inline void tcp_dec_quickack_mode(struct sock *sk)
 #define	TCP_ECN_QUEUE_CWR	2
 #define	TCP_ECN_DEMAND_CWR	4
 #define	TCP_ECN_SEEN		8
+#define	TCP_ECN_ECT_PERMANENT	16
+
+void tcp_enter_quickack_mode(struct sock *sk, unsigned int max_quickacks);
 
 enum tcp_tw_status {
 	TCP_TW_SUCCESS = 0,
@@ -808,6 +811,13 @@ static inline u32 tcp_stamp_us_delta(u64 t1, u64 t0)
 	return max_t(s64, t1 - t0, 0);
 }
 
+/* 32-bit microsecond delta, wrap-safe for intervals far below 2^31 usec.
+ * Used with the low 32 bits of usec timestamps stored in tcp_skb_cb.tx. */
+static inline u32 tcp_stamp32_us_delta(u64 t1, u64 t0)
+{
+	return (u32)(t1 - t0);
+}
+
 static inline u32 tcp_skb_timestamp(const struct sk_buff *skb)
 {
 	return div_u64(skb->skb_mstamp_ns, NSEC_PER_SEC / TCP_TS_HZ);
@@ -876,16 +886,22 @@ struct tcp_skb_cb {
 	union {
 		struct {
 			/* There is space for up to 24 bytes */
-			__u32 in_flight:30,/* Bytes in flight at transmit */
-			      is_app_limited:1, /* cwnd not fully used? */
-			      unused:1;
+			__u32 is_app_limited:1, /* cwnd not fully used? */
+			      delivered_ce:20,  /* CE-marked packets delivered */
+			      unused:11;
 			/* pkts S/ACKed so far upon tx of skb, incl retrans: */
 			__u32 delivered;
-			/* start of send pipeline phase */
-			u64 first_tx_mstamp;
-			/* when we reached the "delivered" count */
-			u64 delivered_mstamp;
+			/* start of send pipeline phase (low 32 bits of usec) */
+			u32 first_tx_mstamp;
+			/* when we reached the "delivered" count (low 32 bits) */
+			u32 delivered_mstamp;
+#define TCPCB_IN_FLIGHT_BITS 20
+#define TCPCB_IN_FLIGHT_MAX ((1U << TCPCB_IN_FLIGHT_BITS) - 1)
+			u32 in_flight:20,   /* packets in flight at transmit */
+			    unused2:12;
+			u32 lost;	/* packets lost so far upon tx of skb */
 		} tx;   /* only used for outgoing skbs */
+#define TCPCB_DELIVERED_CE_MASK ((1U<<20) - 1)
 		union {
 			struct inet_skb_parm	h4;
 #if IS_ENABLED(CONFIG_IPV6)
@@ -1033,7 +1049,11 @@ enum tcp_ca_ack_event_flags {
 #define TCP_CONG_NON_RESTRICTED 0x1
 /* Requires ECN/ECT set on all packets */
 #define TCP_CONG_NEEDS_ECN	0x2
-#define TCP_CONG_MASK	(TCP_CONG_NON_RESTRICTED | TCP_CONG_NEEDS_ECN)
+/* Wants CA_EVENT_ECN_IS_CE delivery even without TCP_CONG_NEEDS_ECN
+ * (model-based CCs like BBRv2 that use CE rate as a congestion signal) */
+#define TCP_CONG_WANTS_CE_EVENTS 0x4
+#define TCP_CONG_MASK	(TCP_CONG_NON_RESTRICTED | TCP_CONG_NEEDS_ECN | \
+			 TCP_CONG_WANTS_CE_EVENTS)
 
 union tcp_cc_info;
 
@@ -1053,8 +1073,13 @@ struct ack_sample {
  */
 struct rate_sample {
 	u64  prior_mstamp; /* starting timestamp for interval */
+	u32  prior_lost;	/* tp->lost at "prior_mstamp" */
 	u32  prior_delivered;	/* tp->delivered at "prior_mstamp" */
+	u32  prior_delivered_ce;/* tp->delivered_ce at "prior_mstamp" */
+	u32  tx_in_flight;	/* packets in flight at starting timestamp */
+	s32  lost;		/* number of packets lost over interval */
 	s32  delivered;		/* number of packets delivered over interval */
+	s32  delivered_ce;	/* packets delivered w/ CE mark over interval */
 	long interval_us;	/* time for tp->delivered to incr "delivered" */
 	u32 snd_interval_us;	/* snd interval for delivered packets */
 	u32 rcv_interval_us;	/* rcv interval for delivered packets */
@@ -1065,6 +1090,7 @@ struct rate_sample {
 	bool is_app_limited;	/* is sample from packet with bubble in pipe? */
 	bool is_retrans;	/* is sample from retransmission? */
 	bool is_ack_delayed;	/* is this (likely) a delayed ACK? */
+	bool is_ece;		/* did this ACK have ECN marked? */
 };
 
 struct tcp_congestion_ops {
@@ -1091,6 +1117,9 @@ struct tcp_congestion_ops {
 	u32  (*undo_cwnd)(struct sock *sk);
 	/* hook for packet ack accounting (optional) */
 	void (*pkts_acked)(struct sock *sk, const struct ack_sample *sample);
+
+	/* indicate that skb marked as lost was just transmitted */
+	void (*skb_marked_lost)(struct sock *sk, const struct sk_buff *skb);
 	/* override sysctl_tcp_min_tso_segs */
 	u32 (*min_tso_segs)(struct sock *sk);
 	/* returns the multiplier used in tcp_sndbuf_expand (optional) */
