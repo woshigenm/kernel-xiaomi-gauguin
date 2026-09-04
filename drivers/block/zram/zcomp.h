@@ -19,7 +19,10 @@ struct zcomp_strm {
 /* dynamic per-device compression frontend */
 struct zcomp {
 	struct zcomp_strm * __percpu *stream;
+	/* secondary (recompression) algorithm, optional */
+	struct zcomp_strm * __percpu *stream_sec;
 	const char *name;
+	const char *name_sec;
 	struct hlist_node node;
 };
 
@@ -31,8 +34,15 @@ bool zcomp_available_algorithm(const char *comp);
 struct zcomp *zcomp_create(const char *comp);
 void zcomp_destroy(struct zcomp *comp);
 
+int zcomp_secondary_create(struct zcomp *comp, const char *algo);
+void zcomp_secondary_destroy(struct zcomp *comp);
+bool zcomp_secondary_enabled(struct zcomp *comp);
+const char *zcomp_secondary_name(struct zcomp *comp);
+
 struct zcomp_strm *zcomp_stream_get(struct zcomp *comp);
 void zcomp_stream_put(struct zcomp *comp);
+struct zcomp_strm *zcomp_stream_get_sec(struct zcomp *comp);
+void zcomp_stream_put_sec(struct zcomp *comp);
 
 int zcomp_compress(struct zcomp_strm *zstrm,
 		const void *src, unsigned int *dst_len);

@@ -47,13 +47,14 @@ static void zcomp_strm_free(struct zcomp_strm *zstrm)
  * allocate new zcomp_strm structure with ->tfm initialized by
  * backend, return NULL on error
  */
-static struct zcomp_strm *zcomp_strm_alloc(struct zcomp *comp)
+static struct zcomp_strm *zcomp_strm_alloc(struct zcomp *comp,
+					   const char *name)
 {
 	struct zcomp_strm *zstrm = kmalloc(sizeof(*zstrm), GFP_KERNEL);
 	if (!zstrm)
 		return NULL;
 
-	zstrm->tfm = crypto_alloc_comp(comp->name, 0, 0);
+	zstrm->tfm = crypto_alloc_comp(name, 0, 0);
 	/*
 	 * allocate 2 pages. 1 for compressed data, plus 1 extra for the
 	 * case when compressed size is larger than the original one
@@ -124,6 +125,16 @@ void zcomp_stream_put(struct zcomp *comp)
 	put_cpu_ptr(comp->stream);
 }
 
+struct zcomp_strm *zcomp_stream_get_sec(struct zcomp *comp)
+{
+	return *get_cpu_ptr(comp->stream_sec);
+}
+
+void zcomp_stream_put_sec(struct zcomp *comp)
+{
+	put_cpu_ptr(comp->stream_sec);
+}
+
 int zcomp_compress(struct zcomp_strm *zstrm,
 		const void *src, unsigned int *dst_len)
 {
@@ -166,12 +177,19 @@ int zcomp_cpu_up_prepare(unsigned int cpu, struct hlist_node *node)
 	if (WARN_ON(*per_cpu_ptr(comp->stream, cpu)))
 		return 0;
 
-	zstrm = zcomp_strm_alloc(comp);
+	zstrm = zcomp_strm_alloc(comp, comp->name);
 	if (IS_ERR_OR_NULL(zstrm)) {
 		pr_err("Can't allocate a compression stream\n");
 		return -ENOMEM;
 	}
 	*per_cpu_ptr(comp->stream, cpu) = zstrm;
+
+	if (comp->stream_sec && !*per_cpu_ptr(comp->stream_sec, cpu)) {
+		zstrm = zcomp_strm_alloc(comp, comp->name_sec);
+		if (IS_ERR_OR_NULL(zstrm))
+			return -ENOMEM;
+		*per_cpu_ptr(comp->stream_sec, cpu) = zstrm;
+	}
 	return 0;
 }
 
@@ -184,6 +202,13 @@ int zcomp_cpu_dead(unsigned int cpu, struct hlist_node *node)
 	if (!IS_ERR_OR_NULL(zstrm))
 		zcomp_strm_free(zstrm);
 	*per_cpu_ptr(comp->stream, cpu) = NULL;
+
+	if (comp->stream_sec) {
+		zstrm = *per_cpu_ptr(comp->stream_sec, cpu);
+		if (!IS_ERR_OR_NULL(zstrm))
+			zcomp_strm_free(zstrm);
+		*per_cpu_ptr(comp->stream_sec, cpu) = NULL;
+	}
 	return 0;
 }
 
@@ -239,4 +264,77 @@ struct zcomp *zcomp_create(const char *compress)
 		return ERR_PTR(error);
 	}
 	return comp;
+}
+
+/* ======   Secondary (recompression) algorithm   ====== */
+
+bool zcomp_secondary_enabled(struct zcomp *comp)
+{
+	return comp->stream_sec != NULL;
+}
+
+const char *zcomp_secondary_name(struct zcomp *comp)
+{
+	return comp->name_sec;
+}
+
+int zcomp_secondary_create(struct zcomp *comp, const char *algo)
+{
+	unsigned int cpu;
+
+	if (!zcomp_available_algorithm(algo))
+		return -EINVAL;
+
+	if (zcomp_secondary_enabled(comp))
+		return -EEXIST;
+
+	comp->name_sec = kstrdup(algo, GFP_KERNEL);
+	if (!comp->name_sec)
+		return -ENOMEM;
+
+	comp->stream_sec = alloc_percpu(struct zcomp_strm *);
+	if (!comp->stream_sec) {
+		kfree(comp->name_sec);
+		comp->name_sec = NULL;
+		return -ENOMEM;
+	}
+
+	cpus_read_lock();
+	for_each_online_cpu(cpu) {
+		struct zcomp_strm *zstrm = zcomp_strm_alloc(comp,
+							    comp->name_sec);
+
+		if (IS_ERR_OR_NULL(zstrm)) {
+			cpus_read_unlock();
+			zcomp_secondary_destroy(comp);
+			return -ENOMEM;
+		}
+		*per_cpu_ptr(comp->stream_sec, cpu) = zstrm;
+	}
+	cpus_read_unlock();
+
+	return 0;
+}
+
+void zcomp_secondary_destroy(struct zcomp *comp)
+{
+	unsigned int cpu;
+	struct zcomp_strm *zstrm;
+
+	if (!comp->stream_sec)
+		return;
+
+	cpus_read_lock();
+	for_each_online_cpu(cpu) {
+		zstrm = *per_cpu_ptr(comp->stream_sec, cpu);
+		if (!IS_ERR_OR_NULL(zstrm))
+			zcomp_strm_free(zstrm);
+		*per_cpu_ptr(comp->stream_sec, cpu) = NULL;
+	}
+	cpus_read_unlock();
+
+	free_percpu(comp->stream_sec);
+	comp->stream_sec = NULL;
+	kfree(comp->name_sec);
+	comp->name_sec = NULL;
 }
