@@ -898,6 +898,10 @@ lto-clang-flags += -fvisibility=default $(call cc-option, -fsplit-lto-unit)
 # Limit inlining across translation units to reduce binary size
 LD_FLAGS_LTO_CLANG := -mllvm -import-instr-limit=5
 
+# ThinLTO incremental cache: massively speeds up relinks after small changes
+THINLTO_CACHE := $(abspath $(objtree)/thinlto-cache)
+LD_FLAGS_LTO_CLANG += --thinlto-cache-dir=$(THINLTO_CACHE) --thinlto-cache-policy=prune_after=30days
+
 KBUILD_LDFLAGS += $(LD_FLAGS_LTO_CLANG)
 KBUILD_LDFLAGS_MODULE += $(LD_FLAGS_LTO_CLANG)
 
