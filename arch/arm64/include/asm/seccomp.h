@@ -12,6 +12,15 @@
 #define _ASM_SECCOMP_H
 
 #include <asm/unistd.h>
+#include <uapi/linux/audit.h>
+
+/* seccomp cache (backport of 5.11 62c9c983): arch descriptors */
+#define SECCOMP_ARCH_NATIVE		AUDIT_ARCH_AARCH64
+#define SECCOMP_ARCH_NATIVE_NR		NR_syscalls
+#ifdef CONFIG_COMPAT
+#define SECCOMP_ARCH_COMPAT		AUDIT_ARCH_ARM
+#define SECCOMP_ARCH_COMPAT_NR		__NR_compat_syscalls
+#endif
 
 #ifdef CONFIG_COMPAT
 #define __NR_seccomp_read_32		__NR_compat_read
