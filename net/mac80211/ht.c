@@ -306,9 +306,9 @@ void ieee80211_sta_tear_down_BA_sessions(struct sta_info *sta,
 	 * request, it is possible that the low level driver requested to stop
 	 * the BA session, so handle it to properly clean tid_tx data.
 	 */
-	if(reason == AGG_STOP_DESTROY_STA) {
-		cancel_work_sync(&sta->ampdu_mlme.work);
+	cancel_work_sync(&sta->ampdu_mlme.work);
 
+	if (reason == AGG_STOP_DESTROY_STA) {
 		mutex_lock(&sta->ampdu_mlme.mtx);
 		for (i = 0; i < IEEE80211_NUM_TIDS; i++) {
 			struct tid_ampdu_tx *tid_tx =

@@ -144,7 +144,7 @@ static void __cleanup_single_sta(struct sta_info *sta)
 		if (!tid_tx)
 			continue;
 		ieee80211_purge_tx_queue(&local->hw, &tid_tx->pending);
-		kfree(tid_tx);
+		kfree_rcu(tid_tx, rcu_head);
 	}
 }
 

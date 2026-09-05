@@ -301,8 +301,7 @@ static struct request *__dd_dispatch_request(struct deadline_data *dd)
 	if (reads) {
 		BUG_ON(RB_EMPTY_ROOT(&dd->sort_list[READ]));
 
-		if (deadline_fifo_request(dd, WRITE) &&
-		    (dd->starved++ >= dd->writes_starved))
+		if (writes && (dd->starved++ >= dd->writes_starved))
 			goto dispatch_writes;
 
 		data_dir = READ;

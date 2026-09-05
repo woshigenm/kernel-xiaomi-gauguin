@@ -1072,8 +1072,8 @@ static void ufshcd_print_pwr_info(struct ufs_hba *hba)
 		 __func__,
 		 hba->pwr_info.gear_rx, hba->pwr_info.gear_tx,
 		 hba->pwr_info.lane_rx, hba->pwr_info.lane_tx,
-		 names[hba->pwr_info.pwr_rx],
-		 names[hba->pwr_info.pwr_tx],
+		 names[hba->pwr_info.pwr_rx & 0x7],
+		 names[hba->pwr_info.pwr_tx & 0x7],
 		 hba->pwr_info.hs_rate);
 }
 
@@ -7932,13 +7932,6 @@ static int ufshcd_abort(struct scsi_cmnd *cmd)
 	lrbp = &hba->lrb[tag];
 
 	ufshcd_update_error_stats(hba, UFS_ERR_TASK_ABORT);
-
-	if (!ufshcd_valid_tag(hba, tag)) {
-		dev_err(hba->dev,
-			"%s: invalid command tag %d: cmd=0x%pK, cmd->request=0x%pK\n",
-			__func__, tag, cmd, cmd->request);
-		BUG_ON(1);
-	}
 
 	/*
 	 * Task abort to the device W-LUN is illegal. When this command

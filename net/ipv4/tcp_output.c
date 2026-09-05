@@ -1896,6 +1896,15 @@ static u32 tcp_tso_autosize(const struct sock *sk, unsigned int mss_now,
 		      sk->sk_pacing_rate >> sk->sk_pacing_shift,
 		      sk->sk_gso_max_size - 1 - MAX_TCP_HEADER);
 
+	/* Account for bytes already queued in the NIC to avoid overshooting.
+	 * This prevents latency spikes when TSO generates segments faster
+	 * than the NIC can transmit them.
+	 */
+	if (refcount_read(&sk->sk_wmem_alloc))
+		bytes = max_t(long, (long)bytes -
+			      refcount_read(&sk->sk_wmem_alloc),
+			      min_tso_segs * mss_now);
+
 	/* Goal is to send at least one packet per ms,
 	 * not one big TSO packet every 100 ms.
 	 * This preserves ACK clocking and is consistent
@@ -2445,10 +2454,9 @@ static bool tcp_small_queue_check(struct sock *sk, const struct sk_buff *skb,
 	limit <<= factor;
 
 	if (refcount_read(&sk->sk_wmem_alloc) > limit) {
-		/* Always send skb if rtx queue is empty or has one skb.
-		 * No need to wait for TX completion to call us back,
-		 * after softirq/tasklet schedule.
-		 * This helps when TX completions are delayed too much.
+		/* Allow a small burst even when throttled to avoid stalls
+		 * when the qdisc or NIC has drained. This helps pacing
+		 * timer interactions.
 		 */
 		if (tcp_rtx_queue_empty_or_single_skb(sk))
 			return false;

@@ -458,15 +458,18 @@ static void update_temperature(struct thermal_zone_device *tz)
 {
 	int temp, ret;
 
-	ret = thermal_zone_get_temp(tz, &temp);
-	if (ret) {
-		if (ret != -EAGAIN)
-			dev_warn(&tz->device,
-				 "failed to read out thermal zone (%d)\n",
-				 ret);
-		return;
+	mutex_lock(&tz->lock);
+	ret = tz->ops->get_temp(tz, &temp);
+	if (!ret) {
+		tz->last_temperature = tz->temperature;
+		tz->temperature = temp;
+		trace_thermal_temperature(tz);
+	} else if (ret != -EAGAIN) {
+		dev_warn(&tz->device,
+			 "failed to read out thermal zone (%d)\n",
+			 ret);
 	}
-	store_temperature(tz, temp);
+	mutex_unlock(&tz->lock);
 }
 
 static void thermal_zone_device_init(struct thermal_zone_device *tz)

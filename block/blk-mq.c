@@ -156,9 +156,14 @@ EXPORT_SYMBOL_GPL(blk_mq_freeze_queue_wait);
 int blk_mq_freeze_queue_wait_timeout(struct request_queue *q,
 				     unsigned long timeout)
 {
-	return wait_event_timeout(q->mq_freeze_wq,
+	int ret;
+
+	ret = wait_event_timeout(q->mq_freeze_wq,
 					percpu_ref_is_zero(&q->q_usage_counter),
 					timeout);
+	if (!ret)
+		pr_err("blk-mq: queue %d: freeze wait timeout\n", q->id);
+	return ret;
 }
 EXPORT_SYMBOL_GPL(blk_mq_freeze_queue_wait_timeout);
 
@@ -635,8 +640,8 @@ void blk_mq_start_request(struct request *rq)
 
 	trace_block_rq_issue(q, rq);
 
+	rq->io_start_time_ns = ktime_get_ns();
 	if (test_bit(QUEUE_FLAG_STATS, &q->queue_flags)) {
-		rq->io_start_time_ns = ktime_get_ns();
 #ifdef CONFIG_BLK_DEV_THROTTLING_LOW
 		rq->throtl_size = blk_rq_sectors(rq);
 #endif
@@ -1158,7 +1163,7 @@ bool blk_mq_dispatch_rq_list(struct request_queue *q, struct list_head *list,
 			     bool got_budget)
 {
 	struct blk_mq_hw_ctx *hctx;
-	struct request *rq, *nxt;
+	struct request *rq;
 	bool no_tag = false;
 	int errors, queued;
 	blk_status_t ret = BLK_STS_OK;
@@ -1209,12 +1214,7 @@ bool blk_mq_dispatch_rq_list(struct request_queue *q, struct list_head *list,
 		 * Flag last if we have no more requests, or if we have more
 		 * but can't assign a driver tag to it.
 		 */
-		if (list_empty(list))
-			bd.last = true;
-		else {
-			nxt = list_first_entry(list, struct request, queuelist);
-			bd.last = !blk_mq_get_driver_tag(nxt);
-		}
+		bd.last = list_is_singular(list);
 
 		ret = q->mq_ops->queue_rq(hctx, &bd);
 		if (ret == BLK_STS_RESOURCE || ret == BLK_STS_DEV_RESOURCE) {

@@ -124,9 +124,23 @@ static vm_fault_t f2fs_vm_page_mkwrite(struct vm_fault *vmf)
 
 #ifdef CONFIG_F2FS_FS_COMPRESSION
 	if (!need_alloc) {
+		void *fsdata = NULL;
+
+		/* prepare compressed cluster for overwrite */
+		err = f2fs_prepare_compress_overwrite(inode, &page,
+							page->index, &fsdata);
+		if (err) {
+			unlock_page(page);
+			goto out_sem;
+		}
+
 		set_new_dnode(&dn, inode, NULL, NULL, 0);
 		err = f2fs_get_dnode_of_data(&dn, page->index, LOOKUP_NODE);
 		f2fs_put_dnode(&dn);
+
+		/* release fsdata if allocated */
+		if (fsdata)
+			f2fs_compress_write_end(inode, fsdata, page->index, 0);
 	}
 #endif
 	if (err) {
@@ -2581,7 +2595,8 @@ static int __f2fs_ioc_gc_range(struct file *filp, struct f2fs_gc_range *range)
 		return -EROFS;
 
 	end = range->start + range->len;
-	if (end < range->start || range->start < MAIN_BLKADDR(sbi) ||
+	if (!range->len || end < range->start ||
+	    range->start < MAIN_BLKADDR(sbi) ||
 					end >= MAX_BLKADDR(sbi))
 		return -EINVAL;
 

@@ -986,6 +986,16 @@ static void set_cluster_writeback(struct compress_ctx *cc)
 	}
 }
 
+static void clear_cluster_writeback(struct compress_ctx *cc)
+{
+	int i;
+
+	for (i = 0; i < cc->cluster_size; i++) {
+		if (cc->rpages[i] && PageWriteback(cc->rpages[i]))
+			end_page_writeback(cc->rpages[i]);
+	}
+}
+
 static void set_cluster_dirty(struct compress_ctx *cc)
 {
 	int i;
@@ -1358,6 +1368,8 @@ out_unlock_op:
 	else
 		f2fs_unlock_op(sbi);
 out_free:
+	/* clear writeback state on error to avoid infinite retry */
+	clear_cluster_writeback(cc);
 	for (i = 0; i < cc->valid_nr_cpages; i++) {
 		f2fs_compress_free_page(cc->cpages[i]);
 		cc->cpages[i] = NULL;

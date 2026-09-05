@@ -3960,7 +3960,7 @@ restart:
 		 * If we're getting trouble reclaiming, start doing writepage
 		 * even in laptop mode.
 		 */
-		if (sc.priority < DEF_PRIORITY - 2)
+		if (sc.priority < DEF_PRIORITY - 2 && !nr_boost_reclaim)
 			sc.may_writepage = 1;
 
 		/* Call soft limit reclaim before calling shrink_node. */

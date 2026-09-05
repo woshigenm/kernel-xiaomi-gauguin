@@ -453,12 +453,12 @@ static void add_victim_entry(struct f2fs_sb_info *sbi,
 	if (mtime > sit_i->max_mtime)
 		sit_i->max_mtime = mtime;
 	if (mtime < sit_i->dirty_min_mtime)
-		sit_i->dirty_min_mtime = mtime;
+		WRITE_ONCE(sit_i->dirty_min_mtime, mtime);
 	if (mtime > sit_i->dirty_max_mtime)
-		sit_i->dirty_max_mtime = mtime;
+		WRITE_ONCE(sit_i->dirty_max_mtime, mtime);
 
 	/* don't choose young section as candidate */
-	if (sit_i->dirty_max_mtime - mtime < p->age_threshold)
+	if (READ_ONCE(sit_i->dirty_max_mtime) - mtime < p->age_threshold)
 		return;
 
 	insert_victim_entry(sbi, mtime, segno);
@@ -487,8 +487,8 @@ static void atgc_lookup_victim(struct f2fs_sb_info *sbi,
 	struct victim_entry *ve;
 	unsigned long long total_time;
 	unsigned long long age, u, accu;
-	unsigned long long max_mtime = sit_i->dirty_max_mtime;
-	unsigned long long min_mtime = sit_i->dirty_min_mtime;
+	unsigned long long max_mtime = READ_ONCE(sit_i->dirty_max_mtime);
+	unsigned long long min_mtime = READ_ONCE(sit_i->dirty_min_mtime);
 	unsigned int sec_blocks = CAP_BLKS_PER_SEC(sbi);
 	unsigned int vblocks;
 	unsigned int dirty_threshold = max(am->max_candidate_count,
@@ -530,9 +530,11 @@ next:
 	u = div64_u64(accu * (sec_blocks - vblocks), sec_blocks) *
 							(100 - age_weight);
 
-	f2fs_bug_on(sbi, age + u >= UINT_MAX);
-
-	cost = UINT_MAX - (age + u);
+	/* use 64-bit to avoid overflow, clamp to UINT_MAX */
+	if (age + u >= UINT_MAX)
+		cost = 0;
+	else
+		cost = UINT_MAX - (age + u);
 	iter++;
 
 	if (cost < p->min_cost ||

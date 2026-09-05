@@ -151,8 +151,19 @@ static void s2idle_loop(void)
 		if (s2idle_ops && s2idle_ops->sync)
 			s2idle_ops->sync();
 
-		if (pm_wakeup_pending())
-			break;
+		if (pm_wakeup_pending()) {
+			/*
+			 * If a wakeup event occurred during the noirq device
+			 * resume, it may have been cleared by the event
+			 * processing above, so check again.
+			 */
+			raw_spin_lock_irq(&s2idle_lock);
+			if (pm_wakeup_pending())
+				error = -EBUSY;
+			raw_spin_unlock_irq(&s2idle_lock);
+			if (error)
+				break;
+		}
 
 		pm_wakeup_clear(false);
 		clear_wakeup_reasons();

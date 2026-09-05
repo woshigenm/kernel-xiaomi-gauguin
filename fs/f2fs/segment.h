@@ -353,6 +353,10 @@ static inline unsigned int get_valid_blocks(struct f2fs_sb_info *sbi,
 	/*
 	 * In order to get # of valid blocks in a section instantly from many
 	 * segments, f2fs manages two counting structures separately.
+	 *
+	 * valid_blocks is a 10-bit bit-field within a 32-bit word.
+	 * On arm64, bit-field reads are atomic at the word level, so
+	 * no torn reads occur even without explicit locking.
 	 */
 	if (use_section && __is_large_section(sbi))
 		return get_sec_entry(sbi, segno)->valid_blocks;

@@ -968,13 +968,18 @@ static void __detach_discard_cmd(struct discard_cmd_control *dcc,
 	if (dc->state == D_DONE)
 		atomic_sub(dc->queued, &dcc->queued_discard);
 
-	list_del(&dc->list);
+	list_del_init(&dc->list);
 	rb_erase_cached(&dc->rb_node, &dcc->root);
 	dcc->undiscard_blks -= dc->len;
 
 	kmem_cache_free(discard_cmd_slab, dc);
 
 	atomic_dec(&dcc->discard_cmd_cnt);
+}
+
+static bool discard_cmd_detached(struct discard_cmd *dc)
+{
+	return list_empty(&dc->list);
 }
 
 static void __remove_discard_cmd(struct f2fs_sb_info *sbi,
@@ -993,6 +998,10 @@ static void __remove_discard_cmd(struct f2fs_sb_info *sbi,
 	spin_unlock_irqrestore(&dc->lock, flags);
 
 	f2fs_bug_on(sbi, dc->ref);
+
+	/* already detached by other path */
+	if (discard_cmd_detached(dc))
+		return;
 
 	if (dc->error == -EOPNOTSUPP)
 		dc->error = 0;
@@ -1730,7 +1739,10 @@ static int issue_discard_thread(void *data)
 
 		issued = __issue_discard_cmd(sbi, &dpolicy);
 		if (issued > 0) {
-			__wait_all_discard_cmd(sbi, &dpolicy);
+			/* don't wait indefinitely; limit to avoid latency spikes */
+			if (atomic_read(&dcc->queued_discard) >
+						dpolicy.max_requests * 2)
+				__wait_all_discard_cmd(sbi, &dpolicy);
 			wait_ms = dpolicy.min_interval;
 		} else if (issued == -1) {
 			wait_ms = f2fs_time_to_wait(sbi, DISCARD_TIME);

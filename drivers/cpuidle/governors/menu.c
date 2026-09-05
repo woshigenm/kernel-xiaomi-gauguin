@@ -174,15 +174,9 @@ static inline int performance_multiplier(unsigned long nr_iowaiters, unsigned lo
 	int mult = 1;
 
 	/* for higher loadavg, we are more reluctant */
+	mult += 2 * get_loadavg(load);
 
-	/*
-	 * this doesn't work as intended - it is almost always 0, but can
-	 * sometimes, depending on workload, spike very high into the hundreds
-	 * even when the average cpu load is under 10%.
-	 */
-	/* mult += 2 * get_loadavg(); */
-
-	/* for IO wait tasks (per cpu!) we add 5x each */
+	/* for IO wait tasks (per cpu!) we add 10x each */
 	mult += 10 * nr_iowaiters;
 
 	return mult;

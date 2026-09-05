@@ -787,7 +787,7 @@ static void tcp_event_data_recv(struct sock *sk, struct sk_buff *skb)
 
 	tcp_ecn_check_ce(sk, skb);
 
-	if (skb->len >= 128)
+	if (skb->len >= inet_csk(sk)->icsk_ack.rcv_mss)
 		tcp_grow_window(sk, skb);
 }
 
@@ -893,6 +893,23 @@ static void tcp_update_pacing_rate(struct sock *sk)
 
 	if (likely(tp->srtt_us))
 		do_div(rate, tp->srtt_us);
+
+	/* Use delivery rate sample when available for more accurate pacing.
+	 * This helps under ACK compression and bursty traffic.
+	 */
+	if (tp->rate_delivered && tp->rate_interval_us) {
+		u64 rate2 = (u64)tp->rate_delivered * tp->mss_cache * (USEC_PER_SEC << 3);
+
+		do_div(rate2, tp->rate_interval_us);
+		if (tp->snd_cwnd < tp->snd_ssthresh / 2)
+			rate2 *= sock_net(sk)->ipv4.sysctl_tcp_pacing_ss_ratio;
+		else
+			rate2 *= sock_net(sk)->ipv4.sysctl_tcp_pacing_ca_ratio;
+
+		/* Use the better of cwnd-based and delivery-rate-based pacing */
+		if (rate2 > rate)
+			rate = rate2;
+	}
 
 	/* WRITE_ONCE() is needed because sch_fq fetches sk_pacing_rate
 	 * without any lock. We want to make sure compiler wont store

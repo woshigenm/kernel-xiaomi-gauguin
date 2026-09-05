@@ -831,11 +831,12 @@ void post_init_entity_util_avg(struct sched_entity *se)
 
 	if (cap > 0) {
 		if (cfs_rq->avg.util_avg != 0) {
-			sa->util_avg  = cfs_rq->avg.util_avg * se->load.weight;
-			sa->util_avg /= (cfs_rq->avg.load_avg + 1);
+			long util_avg = cfs_rq->avg.util_avg * se->load.weight;
 
-			if (sa->util_avg > cap)
-				sa->util_avg = cap;
+			util_avg /= (cfs_rq->avg.load_avg + 1);
+			if (util_avg > cap)
+				util_avg = cap;
+			sa->util_avg = util_avg;
 		} else {
 			sa->util_avg = cap;
 		}

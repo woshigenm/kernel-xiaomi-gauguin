@@ -214,12 +214,21 @@ static void
 ieee80211_agg_start_txq(struct sta_info *sta, int tid, bool enable)
 {
 	struct ieee80211_txq *txq = sta->sta.txq[tid];
+	struct tid_ampdu_tx *tid_tx;
 	struct txq_info *txqi;
 
 	if (!txq)
 		return;
 
 	txqi = to_txq_info(txq);
+
+	spin_lock_bh(&sta->lock);
+	tid_tx = rcu_dereference_protected_tid_tx(sta, tid);
+	if (tid_tx && test_bit(HT_AGG_STATE_WANT_STOP, &tid_tx->state)) {
+		spin_unlock_bh(&sta->lock);
+		return;
+	}
+	spin_unlock_bh(&sta->lock);
 
 	if (enable)
 		set_bit(IEEE80211_TXQ_AMPDU, &txqi->flags);
@@ -445,6 +454,11 @@ static void sta_addba_resp_timer_expired(struct timer_list *t)
 		return;
 	}
 
+	if (test_bit(HT_AGG_STATE_STOPPING, &tid_tx->state) ||
+	    test_bit(HT_AGG_STATE_WANT_STOP, &tid_tx->state)) {
+		return;
+	}
+
 	ht_dbg(sta->sdata, "addBA response timer expired on %pM tid %d\n",
 	       sta->sta.addr, tid);
 
@@ -543,9 +557,13 @@ static void sta_tx_agg_session_timer_expired(struct timer_list *t)
 	u8 tid = tid_tx->tid;
 	unsigned long timeout;
 
-	if (test_bit(HT_AGG_STATE_STOPPING, &tid_tx->state)) {
+	spin_lock_bh(&sta->lock);
+	if (test_bit(HT_AGG_STATE_STOPPING, &tid_tx->state) ||
+	    test_bit(HT_AGG_STATE_WANT_STOP, &tid_tx->state)) {
+		spin_unlock_bh(&sta->lock);
 		return;
 	}
+	spin_unlock_bh(&sta->lock);
 
 	timeout = tid_tx->last_tx + TU_TO_JIFFIES(tid_tx->timeout);
 	if (time_is_after_jiffies(timeout)) {
