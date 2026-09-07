@@ -546,6 +546,46 @@ TRACE_EVENT(mm_vmscan_lru_gen_feedback,
 		__entry->anon_reclaimed,
 		__entry->file_reclaimed)
 );
+
+#define _VMSCAN_THROTTLE_WRITEBACK	(1 << VMSCAN_THROTTLE_WRITEBACK)
+#define _VMSCAN_THROTTLE_ISOLATED	(1 << VMSCAN_THROTTLE_ISOLATED)
+#define _VMSCAN_THROTTLE_NOPROGRESS	(1 << VMSCAN_THROTTLE_NOPROGRESS)
+#define _VMSCAN_THROTTLE_CONGESTED	(1 << VMSCAN_THROTTLE_CONGESTED)
+
+#define show_throttle_flags(flags)						\
+	(flags) ? __print_flags(flags, "|",					\
+		{_VMSCAN_THROTTLE_WRITEBACK,	"VMSCAN_THROTTLE_WRITEBACK"},	\
+		{_VMSCAN_THROTTLE_ISOLATED,	"VMSCAN_THROTTLE_ISOLATED"},	\
+		{_VMSCAN_THROTTLE_NOPROGRESS,	"VMSCAN_THROTTLE_NOPROGRESS"},	\
+		{_VMSCAN_THROTTLE_CONGESTED,	"VMSCAN_THROTTLE_CONGESTED"}	\
+		) : "VMSCAN_THROTTLE_NONE"
+
+TRACE_EVENT(mm_vmscan_throttled,
+
+	TP_PROTO(int nid, int usec_timeout, int usec_delayed, int reason),
+
+	TP_ARGS(nid, usec_timeout, usec_delayed, reason),
+
+	TP_STRUCT__entry(
+		__field(int, nid)
+		__field(int, usec_timeout)
+		__field(int, usec_delayed)
+		__field(int, reason)
+	),
+
+	TP_fast_assign(
+		__entry->nid = nid;
+		__entry->usec_timeout = usec_timeout;
+		__entry->usec_delayed = usec_delayed;
+		__entry->reason = 1U << reason;
+	),
+
+	TP_printk("nid=%d usec_timeout=%d usect_delayed=%d reason=%s",
+		__entry->nid,
+		__entry->usec_timeout,
+		__entry->usec_delayed,
+		show_throttle_flags(__entry->reason))
+);
 #endif /* _TRACE_VMSCAN_H */
 
 /* This part must be outside protection */

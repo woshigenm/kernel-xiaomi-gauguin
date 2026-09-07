@@ -193,6 +193,7 @@ enum node_stat_item {
 	NR_VMSCAN_IMMEDIATE,	/* Prioritise for reclaim when writeback ends */
 	NR_DIRTIED,		/* page dirtyings since bootup */
 	NR_WRITTEN,		/* page writings since bootup */
+	NR_THROTTLED_WRITTEN,	/* NR_WRITTEN while reclaim throttled */
 	NR_KERNEL_MISC_RECLAIMABLE,	/* reclaimable non-slab kernel pages */
 	NR_UNRECLAIMABLE_PAGES,
 	NR_ION_HEAP,
@@ -881,6 +882,14 @@ extern struct page *mem_map;
  * Memory statistics and page replacement data structures are maintained on a
  * per-zone basis.
  */
+enum vmscan_throttle_state {
+	VMSCAN_THROTTLE_WRITEBACK,
+	VMSCAN_THROTTLE_ISOLATED,
+	VMSCAN_THROTTLE_NOPROGRESS,
+	VMSCAN_THROTTLE_CONGESTED,
+	NR_VMSCAN_THROTTLE,
+};
+
 struct bootmem_data;
 typedef struct pglist_data {
 	struct zone node_zones[MAX_NR_ZONES];
@@ -917,6 +926,13 @@ typedef struct pglist_data {
 	int node_id;
 	wait_queue_head_t kswapd_wait;
 	wait_queue_head_t pfmemalloc_wait;
+
+	/* workqueues for throttling reclaim for different reasons. */
+	wait_queue_head_t reclaim_wait[NR_VMSCAN_THROTTLE];
+
+	atomic_t nr_writeback_throttled;/* nr of writeback-throttled tasks */
+	unsigned long nr_reclaim_start;	/* nr pages written while throttled
+					 * when throttling started. */
 	/*
 	 * Protected by mem_hotplug_begin/end()
 	 */
