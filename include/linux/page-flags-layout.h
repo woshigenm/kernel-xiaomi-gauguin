@@ -3,6 +3,7 @@
 #define PAGE_FLAGS_LAYOUT_H
 
 #include <linux/numa.h>
+#include <linux/log2.h>
 #include <generated/bounds.h>
 
 /*
@@ -54,6 +55,16 @@
 #define SECTIONS_WIDTH		0
 #endif
 
+#ifdef CONFIG_LRU_GEN
+/* order_base_2(MAX_NR_GENS + 1); validated by init_lru_gen() BUILD_BUG_ONs */
+#define LRU_GEN_WIDTH		3
+/* order_base_2(MAX_NR_TIERS) */
+#define __LRU_REFS_WIDTH	2
+#else
+#define LRU_GEN_WIDTH		0
+#define __LRU_REFS_WIDTH	0
+#endif
+
 #define ZONES_WIDTH		ZONES_SHIFT
 
 #if SECTIONS_WIDTH+ZONES_WIDTH+NODES_SHIFT <= BITS_PER_LONG - NR_PAGEFLAGS
@@ -90,10 +101,16 @@
 #define LAST_CPUPID_WIDTH 0
 #endif
 
-#if SECTIONS_WIDTH+NODES_WIDTH+ZONES_WIDTH+LAST_CPUPID_WIDTH+KASAN_TAG_WIDTH \
+#if SECTIONS_WIDTH+NODES_WIDTH+ZONES_WIDTH+LRU_GEN_WIDTH+__LRU_REFS_WIDTH+ \
+	LAST_CPUPID_WIDTH+KASAN_TAG_WIDTH \
 	> BITS_PER_LONG - NR_PAGEFLAGS
 #error "Not enough bits in page flags"
 #endif
+
+/* see the comment on MAX_NR_TIERS */
+#define LRU_REFS_WIDTH	min(__LRU_REFS_WIDTH, BITS_PER_LONG - NR_PAGEFLAGS - \
+			    ZONES_WIDTH - LRU_GEN_WIDTH - SECTIONS_WIDTH - \
+			    NODES_WIDTH - KASAN_TAG_WIDTH - LAST_CPUPID_WIDTH)
 
 /*
  * We are going to use the flags for the page to node mapping if its in

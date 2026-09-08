@@ -517,12 +517,52 @@ struct mm_struct {
 #endif
 	} __randomize_layout;
 
+#ifdef CONFIG_LRU_GEN
+	struct {
+		/* list node trailing the currently active mm */
+		struct list_head list;
+		/* determines which lruvec's mm_list this mm is on */
+		struct mem_cgroup *memcg;
+		/* per-node scanning bitmap used by the aging */
+		unsigned long bitmap;
+	} lru_gen;
+#endif
+
 	/*
 	 * The mm_cpumask needs to be at the end of mm_struct, because it
 	 * is dynamically sized based on nr_cpu_ids.
 	 */
 	unsigned long cpu_bitmap[];
 };
+
+#ifdef CONFIG_LRU_GEN
+static inline void lru_gen_init_mm(struct mm_struct *mm)
+{
+	INIT_LIST_HEAD(&mm->lru_gen.list);
+	mm->lru_gen.bitmap = 0;
+#ifdef CONFIG_MEMCG
+	mm->lru_gen.memcg = NULL;
+#endif
+}
+
+static inline void lru_gen_use_mm(struct mm_struct *mm)
+{
+	/*
+	 * When the bitmap is set, page reclaim knows this mm_struct has been
+	 * used since the last time it cleared the bitmap. So it might be worth
+	 * walking the page tables of this mm_struct to clear the accessed bit.
+	 */
+	WRITE_ONCE(mm->lru_gen.bitmap, -1);
+}
+#else /* !CONFIG_LRU_GEN */
+static inline void lru_gen_init_mm(struct mm_struct *mm)
+{
+}
+
+static inline void lru_gen_use_mm(struct mm_struct *mm)
+{
+}
+#endif /* CONFIG_LRU_GEN */
 
 extern struct mm_struct init_mm;
 

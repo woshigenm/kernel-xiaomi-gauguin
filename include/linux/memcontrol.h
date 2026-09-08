@@ -250,6 +250,11 @@ struct mem_cgroup {
 	/* thresholds for memory usage. RCU-protected */
 	struct mem_cgroup_thresholds thresholds;
 
+#ifdef CONFIG_LRU_GEN
+	/* per-memcg mm list for the multi-gen LRU */
+	struct lru_gen_mm_list mm_list;
+#endif
+
 	/* thresholds for mem+swap usage. RCU-protected */
 	struct mem_cgroup_thresholds memsw_thresholds;
 

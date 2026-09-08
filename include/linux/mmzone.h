@@ -21,10 +21,6 @@
 #include <linux/android_kabi.h>
 #include <asm/page.h>
 
-struct scan_control;
-bool scan_control_global_reclaim(struct scan_control *sc);
-struct lruvec;
-
 /* Free memory management - zoned buddy allocator.  */
 #ifndef CONFIG_FORCE_MAX_ZONEORDER
 #define MAX_ORDER 11
@@ -238,6 +234,173 @@ static inline int is_active_lru(enum lru_list lru)
 	return (lru == LRU_ACTIVE_ANON || lru == LRU_ACTIVE_FILE);
 }
 
+/*
+ * Evictable pages are divided into multiple generations. The youngest and
+ * the oldest generation numbers, max_seq and min_seq, are monotonically
+ * increasing. They form a sliding window of a variable size [MIN_NR_GENS,
+ * MAX_NR_GENS]. An offset within MAX_NR_GENS, i.e., gen, indexes the LRU
+ * list of the corresponding generation. The gen counter in page->flags
+ * stores gen+1 while a page is on one of lrugen->lists[]. Otherwise it
+ * stores 0.
+ */
+#define MIN_NR_GENS		2U
+#define MAX_NR_GENS		4U
+#define MAX_NR_TIERS		4U
+#define ANON_AND_FILE		2
+
+struct lruvec;
+struct page_vma_mapped_walk;
+
+#define LRU_GEN_MASK		((BIT(LRU_GEN_WIDTH) - 1) << LRU_GEN_PGOFF)
+#define LRU_REFS_MASK		((BIT(LRU_REFS_WIDTH) - 1) << LRU_REFS_PGOFF)
+
+#ifdef CONFIG_LRU_GEN
+
+enum {
+	LRU_GEN_ANON,
+	LRU_GEN_FILE,
+};
+
+enum {
+	LRU_GEN_CORE,
+	LRU_GEN_MM_WALK,
+	LRU_GEN_NONLEAF_YOUNG,
+	NR_LRU_GEN_CAPS
+};
+
+#define MIN_LRU_BATCH		BITS_PER_LONG
+#define MAX_LRU_BATCH		(MIN_LRU_BATCH * 64)
+
+/* whether to keep historical stats from evicted generations */
+#ifdef CONFIG_LRU_GEN_STATS
+#define NR_HIST_GENS		MAX_NR_GENS
+#else
+#define NR_HIST_GENS		1U
+#endif
+
+struct lru_gen_struct {
+	/* the aging increments the youngest generation number */
+	unsigned long max_seq;
+	/* the eviction increments the oldest generation numbers */
+	unsigned long min_seq[ANON_AND_FILE];
+	/* the birth time of each generation in jiffies */
+	unsigned long timestamps[MAX_NR_GENS];
+	/* the multi-gen LRU lists, lazily sorted on eviction */
+	struct list_head lists[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
+	/* the multi-gen LRU sizes, eventually consistent */
+	long nr_pages[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
+	/* the exponential moving average of refaulted */
+	unsigned long avg_refaulted[ANON_AND_FILE][MAX_NR_TIERS];
+	/* the exponential moving average of evicted+protected */
+	unsigned long avg_total[ANON_AND_FILE][MAX_NR_TIERS];
+	/* the first tier doesn't need protection, hence the minus one */
+	unsigned long protected[NR_HIST_GENS][ANON_AND_FILE][MAX_NR_TIERS - 1];
+	/* can be modified without holding the LRU lock */
+	atomic_long_t evicted[NR_HIST_GENS][ANON_AND_FILE][MAX_NR_TIERS];
+	atomic_long_t refaulted[NR_HIST_GENS][ANON_AND_FILE][MAX_NR_TIERS];
+	/* whether the multi-gen LRU is enabled */
+	bool enabled;
+};
+
+enum {
+	MM_LEAF_TOTAL,		/* total leaf entries */
+	MM_LEAF_OLD,		/* old leaf entries */
+	MM_LEAF_YOUNG,		/* young leaf entries */
+	MM_NONLEAF_TOTAL,	/* total non-leaf entries */
+	MM_NONLEAF_FOUND,	/* non-leaf entries found in Bloom filters */
+	MM_NONLEAF_ADDED,	/* non-leaf entries added to Bloom filters */
+	NR_MM_STATS
+};
+
+/* double-buffering Bloom filters */
+#define NR_BLOOM_FILTERS	2
+
+struct lru_gen_mm_state {
+	/* set to max_seq after each iteration */
+	unsigned long seq;
+	/* where the current iteration continues (inclusive) */
+	struct list_head *head;
+	/* where the last iteration ended (exclusive) */
+	struct list_head *tail;
+	/* to wait for the last page table walker to finish */
+	struct wait_queue_head wait;
+	/* Bloom filters flip after each iteration */
+	unsigned long *filters[NR_BLOOM_FILTERS];
+	/* the mm stats for debugging */
+	unsigned long stats[NR_HIST_GENS][NR_MM_STATS];
+	/* the number of concurrent page table walkers */
+	int nr_walkers;
+};
+
+struct lru_gen_mm_walk {
+	/* the lruvec under reclaim */
+	struct lruvec *lruvec;
+	/* unstable max_seq from lru_gen_struct */
+	unsigned long max_seq;
+	/* the next address within an mm to scan */
+	unsigned long next_addr;
+	/* to batch promoted pages */
+	int nr_pages[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
+	/* to batch the mm stats */
+	int mm_stats[NR_MM_STATS];
+	/* total batched items */
+	int batched;
+	bool can_swap;
+	bool force_scan;
+};
+
+struct lru_gen_mm_list {
+	/* list of mm_struct's */
+	struct list_head fifo;
+	/* lock to protect the above list */
+	spinlock_t lock;
+};
+
+void lru_gen_init_lruvec(struct lruvec *lruvec);
+void lru_gen_look_around(struct page_vma_mapped_walk *pvmw);
+
+struct mem_cgroup;
+#ifdef CONFIG_MEMCG
+void lru_gen_init_memcg(struct mem_cgroup *memcg);
+void lru_gen_exit_memcg(struct mem_cgroup *memcg);
+#endif
+
+#else /* !CONFIG_LRU_GEN */
+
+struct mem_cgroup;
+
+static inline void lru_gen_init_lruvec(struct lruvec *lruvec)
+{
+}
+
+static inline void lru_gen_look_around(struct page_vma_mapped_walk *pvmw)
+{
+}
+
+struct scan_control;
+struct pglist_data;
+static inline void lru_gen_shrink_lruvec(struct lruvec *lruvec,
+					 struct scan_control *sc)
+{
+}
+
+static inline void lru_gen_age_node(struct pglist_data *pgdat,
+				    struct scan_control *sc)
+{
+}
+
+#ifdef CONFIG_MEMCG
+static inline void lru_gen_init_memcg(struct mem_cgroup *memcg)
+{
+}
+
+static inline void lru_gen_exit_memcg(struct mem_cgroup *memcg)
+{
+}
+#endif
+
+#endif /* CONFIG_LRU_GEN */
+
 struct zone_reclaim_stat {
 	/*
 	 * The pageout code in vmscan.c keeps track of how many of the
@@ -251,227 +414,6 @@ struct zone_reclaim_stat {
 	unsigned long		recent_scanned[2];
 };
 
-enum zone_type;
-
-#ifdef CONFIG_LRU_GEN
-#define MIN_NR_GENS	2U
-#define MAX_NR_GENS	4U
-
-enum {
-	LRU_GEN_ANON,
-	LRU_GEN_FILE,
-	ANON_AND_FILE,
-};
-
-struct lru_gen_struct {
-	/* the youngest generation number */
-	unsigned long max_seq;
-	/* the oldest generation numbers for anon and file */
-	unsigned long min_seq[ANON_AND_FILE];
-	/* birth time of each generation in jiffies */
-	unsigned long timestamps[MAX_NR_GENS];
-	/* generations indexed by [gen][type][zone] */
-	struct list_head lists[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
-	/* total pages per [gen][type][zone] */
-	long nr_pages[MAX_NR_GENS][ANON_AND_FILE][MAX_NR_ZONES];
-	/* reclaim pressure score per type; higher means older/cooler */
-	unsigned long pressure[ANON_AND_FILE];
-	/* memcg-local reclaim tiers per type */
-	unsigned int tiers[ANON_AND_FILE];
-	/* running scan/reclaim accounting for feedback control */
-	unsigned long scanned[ANON_AND_FILE];
-	unsigned long reclaimed[ANON_AND_FILE];
-	/* access samples observed since last aging cycle */
-	unsigned long accessed[ANON_AND_FILE];
-	/* pages reclaimed from the oldest generations */
-	unsigned long evicted[ANON_AND_FILE];
-	/* dedup filter timestamps for access/reference feedback */
-	unsigned long access_stamp[ANON_AND_FILE];
-	/* number of samples filtered by dedup */
-	unsigned long deduped[ANON_AND_FILE];
-	/* number of pressure normalization operations */
-	unsigned long normalized[ANON_AND_FILE];
-	/* jiffies when reclaim feedback was last updated */
-	unsigned long last_reclaim;
-	/* bookkeeping for broader reclaim-context mm walks */
-	unsigned long mm_walk_seq;
-	unsigned long mm_walk_success;
-	unsigned long mm_walk_failures;
-	unsigned long mm_walk_fallback;
-	unsigned long mm_walk_sampled_ptes;
-	unsigned long mm_walk_young_cleared;
-	/* streak of low-efficiency reclaim cycles */
-	unsigned int reclaim_stall;
-	/* last-cycle reclaim feedback snapshot */
-	unsigned long last_scanned;
-	unsigned long last_reclaimed;
-	unsigned int last_efficiency;
-};
-
-void lru_gen_init_lruvec(struct lruvec *lruvec);
-bool lru_gen_enabled(void);
-bool lru_gen_shrink_node(struct pglist_data *pgdat, struct scan_control *sc);
-void lru_gen_track_page_scan(struct lruvec *lruvec, enum lru_list lru,
-			     unsigned long nr_scanned, unsigned long nr_taken,
-			     unsigned long nr_reclaimed);
-void lru_gen_adjust_scan(struct lruvec *lruvec, struct scan_control *sc,
-			 unsigned long *nr);
-void lru_gen_tune_memcg(struct lruvec *lruvec, struct scan_control *sc,
-			unsigned long reclaimed, unsigned long scanned);
-void lru_gen_note_access(struct lruvec *lruvec, bool file);
-void lru_gen_note_page_referenced(struct lruvec *lruvec, struct page *page,
-				  bool from_reclaim);
-void lru_gen_note_lru_move(struct lruvec *lruvec, enum lru_list old_lru,
-			   enum lru_list new_lru, unsigned long nr_pages);
-void lru_gen_enter_reclaim(struct lruvec *lruvec, struct scan_control *sc);
-void lru_gen_update_size(struct lruvec *lruvec, enum lru_list lru,
-			 enum zone_type zid, long delta);
-int lru_gen_set_state(bool enable);
-int lru_gen_get_state(void);
-int lru_gen_set_min_ttl(unsigned int ttl_ms);
-unsigned int lru_gen_get_min_ttl(void);
-int lru_gen_set_age_period(unsigned int period_ms);
-unsigned int lru_gen_get_age_period(void);
-int lru_gen_set_weight_anon(unsigned int anon_pct);
-unsigned int lru_gen_get_weight_anon(void);
-int lru_gen_set_dedup_window(unsigned int window_ms);
-unsigned int lru_gen_get_dedup_window(void);
-int lru_gen_set_normalize(bool enable);
-int lru_gen_get_normalize(void);
-int lru_gen_set_ptwalk_pages(unsigned int pages);
-unsigned int lru_gen_get_ptwalk_pages(void);
-int lru_gen_set_reclaim_ptwalk(bool enable);
-int lru_gen_get_reclaim_ptwalk(void);
-int lru_gen_set_ptwalk_clear_young(bool enable);
-int lru_gen_get_ptwalk_clear_young(void);
-#else
-static inline void lru_gen_init_lruvec(struct lruvec *lruvec)
-{
-}
-static inline bool lru_gen_enabled(void)
-{
-	return false;
-}
-static inline bool lru_gen_shrink_node(struct pglist_data *pgdat,
-				       struct scan_control *sc)
-{
-	return false;
-}
-static inline void lru_gen_track_page_scan(struct lruvec *lruvec,
-					   enum lru_list lru,
-					   unsigned long nr_scanned,
-					   unsigned long nr_taken,
-					   unsigned long nr_reclaimed)
-{
-}
-static inline void lru_gen_adjust_scan(struct lruvec *lruvec,
-				       struct scan_control *sc,
-				       unsigned long *nr)
-{
-}
-static inline void lru_gen_tune_memcg(struct lruvec *lruvec,
-				      struct scan_control *sc,
-				      unsigned long reclaimed,
-				      unsigned long scanned)
-{
-}
-static inline void lru_gen_note_access(struct lruvec *lruvec, bool file)
-{
-}
-static inline void lru_gen_note_page_referenced(struct lruvec *lruvec,
-						struct page *page,
-						bool from_reclaim)
-{
-}
-static inline void lru_gen_note_lru_move(struct lruvec *lruvec,
-					 enum lru_list old_lru,
-					 enum lru_list new_lru,
-					 unsigned long nr_pages)
-{
-}
-static inline void lru_gen_enter_reclaim(struct lruvec *lruvec,
-					 struct scan_control *sc)
-{
-}
-static inline void lru_gen_update_size(struct lruvec *lruvec,
-				       enum lru_list lru, enum zone_type zid,
-				       long delta)
-{
-}
-static inline int lru_gen_set_state(bool enable)
-{
-	return 0;
-}
-static inline int lru_gen_get_state(void)
-{
-	return 0;
-}
-static inline int lru_gen_set_min_ttl(unsigned int ttl_ms)
-{
-	return 0;
-}
-static inline unsigned int lru_gen_get_min_ttl(void)
-{
-	return 0;
-}
-static inline int lru_gen_set_age_period(unsigned int period_ms)
-{
-	return 0;
-}
-static inline unsigned int lru_gen_get_age_period(void)
-{
-	return 0;
-}
-static inline int lru_gen_set_weight_anon(unsigned int anon_pct)
-{
-	return 0;
-}
-static inline unsigned int lru_gen_get_weight_anon(void)
-{
-	return 50;
-}
-static inline int lru_gen_set_dedup_window(unsigned int window_ms)
-{
-	return 0;
-}
-static inline unsigned int lru_gen_get_dedup_window(void)
-{
-	return 0;
-}
-static inline int lru_gen_set_normalize(bool enable)
-{
-	return 0;
-}
-static inline int lru_gen_get_normalize(void)
-{
-	return 0;
-}
-static inline int lru_gen_set_ptwalk_pages(unsigned int pages)
-{
-	return -EINVAL;
-}
-static inline unsigned int lru_gen_get_ptwalk_pages(void)
-{
-	return 0;
-}
-static inline int lru_gen_set_reclaim_ptwalk(bool enable)
-{
-	return -EINVAL;
-}
-static inline int lru_gen_get_reclaim_ptwalk(void)
-{
-	return 0;
-}
-static inline int lru_gen_set_ptwalk_clear_young(bool enable)
-{
-	return -EINVAL;
-}
-static inline int lru_gen_get_ptwalk_clear_young(void)
-{
-	return 0;
-}
-#endif
-
 struct lruvec {
 	struct list_head		lists[NR_LRU_LISTS];
 	struct zone_reclaim_stat	reclaim_stat;
@@ -480,8 +422,10 @@ struct lruvec {
 	/* Refaults at the time of last reclaim cycle */
 	unsigned long			refaults;
 #ifdef CONFIG_LRU_GEN
-	/* Evictable pages split into multiple generations */
+	/* evictable pages divided into generations */
 	struct lru_gen_struct		lrugen;
+	/* to concurrently iterate lru_gen_mm_list */
+	struct lru_gen_mm_state		mm_state;
 #endif
 #ifdef CONFIG_MEMCG
 	struct pglist_data *pgdat;
@@ -930,6 +874,10 @@ typedef struct pglist_data {
 	/* workqueues for throttling reclaim for different reasons. */
 	wait_queue_head_t reclaim_wait[NR_VMSCAN_THROTTLE];
 
+#ifdef CONFIG_LRU_GEN
+	/* per-kswapd mm walk data */
+	struct lru_gen_mm_walk mm_walk;
+#endif
 	atomic_t nr_writeback_throttled;/* nr of writeback-throttled tasks */
 	unsigned long nr_reclaim_start;	/* nr pages written while throttled
 					 * when throttling started. */
