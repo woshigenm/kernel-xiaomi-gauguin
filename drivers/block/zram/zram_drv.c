@@ -1206,6 +1206,7 @@ static int zram_recompress_slot(struct zram *zram, u32 index,
 	struct zram_entry *entry, *new_entry;
 	unsigned long handle_new;
 	unsigned int comp_len_old, comp_len_new;
+	unsigned int class_index_old, class_index_new;
 	u32 checksum = 0;
 	void *src, *dst;
 	int ret;
@@ -1217,6 +1218,8 @@ static int zram_recompress_slot(struct zram *zram, u32 index,
 	comp_len_old = zram_get_obj_size(zram, index);
 	if (threshold && comp_len_old < threshold)
 		return 0;
+
+	class_index_old = zs_lookup_class_index(zram->mem_pool, comp_len_old);
 
 	/*
 	 * Skip entries shared in the dedup tree: replacing one would
@@ -1251,7 +1254,9 @@ static int zram_recompress_slot(struct zram *zram, u32 index,
 	}
 
 	/* Continue only if we actually save memory. */
-	if (comp_len_new >= comp_len_old) {
+	class_index_new = zs_lookup_class_index(zram->mem_pool, comp_len_new);
+	if (comp_len_new >= comp_len_old ||
+	    class_index_new >= class_index_old) {
 		zcomp_stream_put_sec(zram->comp);
 		zram_set_flag(zram, index, ZRAM_INCOMPRESSIBLE);
 		return 0;
@@ -1339,6 +1344,11 @@ static ssize_t recompress_store(struct device *dev,
 			continue;
 		}
 
+		up_read(&zram->init_lock);
+		return -EINVAL;
+	}
+
+	if (threshold >= huge_class_size) {
 		up_read(&zram->init_lock);
 		return -EINVAL;
 	}
