@@ -897,3 +897,9 @@ config MEMFD_ASHMEM_SHIM
 	  now memfds passed to them.
 
 	  Unless you are running Android, say N.
+
+menu "Data Access Monitoring"
+
+source "mm/damon/Kconfig"
+
+endmenu

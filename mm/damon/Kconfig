@@ -1,0 +1,45 @@
+# SPDX-License-Identifier: GPL-2.0
+
+config DAMON
+	bool "Data Access Monitoring framework"
+	help
+	  This builds a framework that allows applications to monitor
+	  access frequency of each memory region. The information can be useful
+	  for performance-centric memory management.
+
+	  Say Y here if you want to use the framework.  If unsure, say N.
+
+config DAMON_VADDR
+	bool "Data access monitoring primitives for virtual address spaces"
+	depends on DAMON && MMU
+	select IDLE_PAGE_TRACKING
+	help
+	  This builds the default data access monitoring primitives for DAMON
+	  that works for virtual address spaces of the processes.
+
+config DAMON_PADDR
+	bool "Data access monitoring primitives for the physical address space"
+	depends on DAMON && MMU
+	select IDLE_PAGE_TRACKING
+	help
+	  This builds the default data access monitoring primitives for DAMON
+	  that works for the physical address space.
+
+config DAMON_SYSFS
+	bool "DAMON sysfs interface"
+	depends on DAMON && SYSFS
+	help
+	  This builds the DAMON sysfs interface.  It is currently only for
+	  the monitoring operations.  The physical address space monitoring
+	  and the DAMOS support are not implemented yet.
+
+config DAMON_RECLAIM
+	bool "Build DAMON-based data reclaiming module"
+	depends on DAMON_PADDR
+	help
+	  This builds the DAMON-based data reclaiming module that reclaims
+	  cold pages after specified time of no access.
+
+	  This is suggested to be used when the memory is wasted or the
+	  reclaiming of the cold pages is required but the huge CPU and memory
+	  footprints of direct reclamation are not desired.
