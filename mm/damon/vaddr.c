@@ -172,9 +172,9 @@ static int damon_va_three_regions(struct damon_target *t,
 	if (!mm)
 		return -EINVAL;
 
-	down_read(&mm->mmap_sem);
+	mmap_read_lock(mm);
 	rc = __damon_va_three_regions(mm, regions);
-	up_read(&mm->mmap_sem);
+	mmap_read_unlock(mm);
 
 	mmput(mm);
 	return rc;
@@ -382,9 +382,9 @@ static void damon_va_mkold(struct mm_struct *mm, unsigned long addr)
 		.mm = mm,
 	};
 
-	down_read(&mm->mmap_sem);
+	mmap_read_lock(mm);
 	walk_page_range(addr, addr + 1, &walk);
-	up_read(&mm->mmap_sem);
+	mmap_read_unlock(mm);
 }
 
 /*
@@ -525,9 +525,9 @@ static bool damon_va_young(struct mm_struct *mm, unsigned long addr,
 		.mm = mm,
 	};
 
-	down_read(&mm->mmap_sem);
+	mmap_read_lock(mm);
 	walk_page_range(addr, addr + 1, &walk);
-	up_read(&mm->mmap_sem);
+	mmap_read_unlock(mm);
 	return arg.young;
 }
 
