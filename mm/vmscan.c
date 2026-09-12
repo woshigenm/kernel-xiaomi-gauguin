@@ -3374,7 +3374,13 @@ static int page_update_gen(struct page *folio, int gen)
 
 		new_flags = old_flags & ~(LRU_GEN_MASK | LRU_REFS_MASK | LRU_REFS_FLAGS);
 		new_flags |= (gen + 1UL) << LRU_GEN_PGOFF;
-	} while (cmpxchg(&folio->flags, old_flags, new_flags) != old_flags);
+		/*
+		 * On cmpxchg() failure, refresh old_flags from memory (like the
+		 * upstream try_cmpxchg() does) before retrying; otherwise a stale
+		 * old_flags livelocks this loop while holding the ptl.
+		 */
+	} while (cmpxchg(&folio->flags, old_flags, new_flags) != old_flags &&
+		 ((void)(old_flags = READ_ONCE(folio->flags)), 1));
 
 	return ((old_flags & LRU_GEN_MASK) >> LRU_GEN_PGOFF) - 1;
 }
@@ -3402,7 +3408,9 @@ static int page_inc_gen(struct lruvec *lruvec, struct page *folio, bool reclaimi
 		/* for end_page_writeback() */
 		if (reclaiming)
 			new_flags |= BIT(PG_reclaim);
-	} while (cmpxchg(&folio->flags, old_flags, new_flags) != old_flags);
+		/* refresh old_flags on cmpxchg() failure (see page_update_gen()) */
+	} while (cmpxchg(&folio->flags, old_flags, new_flags) != old_flags &&
+		 ((void)(old_flags = READ_ONCE(folio->flags)), 1));
 
 	lru_gen_update_size(lruvec, folio, old_gen, new_gen);
 

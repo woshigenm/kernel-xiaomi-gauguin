@@ -396,7 +396,9 @@ static void page_inc_refs(struct page *page)
 
 		new_flags += BIT(LRU_REFS_PGOFF);
 		new_flags |= old_flags & ~LRU_REFS_MASK;
-	} while (cmpxchg(&page->flags, old_flags, new_flags) != old_flags);
+		/* refresh old_flags on cmpxchg() failure (like try_cmpxchg()) */
+	} while (cmpxchg(&page->flags, old_flags, new_flags) != old_flags &&
+		 ((void)(old_flags = READ_ONCE(page->flags)), 1));
 }
 #else
 static void page_inc_refs(struct page *page)
