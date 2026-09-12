@@ -1317,6 +1317,11 @@ static unsigned long shrink_page_list(struct list_head *page_list,
 		if (!sc->may_unmap && page_mapped(page))
 			goto keep_locked;
 
+		/* page_update_gen() tried to promote this page? */
+		if (lru_gen_enabled() && !force_reclaim &&
+		    page_mapped(page) && PageReferenced(page))
+			goto keep_locked;
+
 		/* Double the slab pressure for mapped and swapcache pages */
 		if ((page_mapped(page) || PageSwapCache(page)) &&
 		    !(PageAnon(page) && !PageSwapBacked(page)))
@@ -3565,7 +3570,7 @@ static struct page *get_pfn_to_page(unsigned long pfn, struct mem_cgroup *memcg,
 		return NULL;
 
 	/* file VMAs can contain anon pages from COW */
-	if (page_is_file_cache(folio) && !can_swap)
+	if (!page_is_file_cache(folio) && !can_swap)
 		return NULL;
 
 	return folio;
@@ -3820,32 +3825,60 @@ restart:
 		goto restart;
 }
 
-static int walk_pud_range(pud_t *pud, unsigned long start, unsigned long end,
+/* folded-pud configs (PGTABLE_LEVELS=3) don't define pud_index() */
+#ifndef pud_index
+#define pud_index(addr)		(((addr) >> PUD_SHIFT) & (PTRS_PER_PUD - 1))
+#endif
+
+static int walk_pud_range(p4d_t *p4d, unsigned long start, unsigned long end,
 			  struct mm_walk *args)
 {
+	int i;
+	pud_t *pud;
+	unsigned long addr;
+	unsigned long next;
 	struct lru_gen_mm_walk *walk = args->private;
 
-	/* arm64 4-level: p4d folded into pgd; this callback covers one pud */
+	pud = pud_offset(p4d, start & P4D_MASK);
+restart:
+	for (i = pud_index(start), addr = start; addr != end; i++, addr = next) {
+		pud_t val = READ_ONCE(pud[i]);
 
-	walk_pmd_range(pud, start, end, args);
+		next = pud_addr_end(addr, end);
 
-	/* a racy check to curtail the waiting time */
-	if (wq_has_sleeper(&walk->lruvec->mm_state.wait))
-		return 1;
+		if (!pud_present(val) || WARN_ON_ONCE(pud_leaf(val)))
+			continue;
 
-	if (need_resched() || walk->batched >= MAX_LRU_BATCH) {
-		walk->next_addr = max(end, args->vma->vm_start);
-		return -EAGAIN;
+		walk_pmd_range(&val, addr, next, args);
+
+		/* a racy check to curtail the waiting time */
+		if (wq_has_sleeper(&walk->lruvec->mm_state.wait))
+			return 1;
+
+		if (need_resched() || walk->batched >= MAX_LRU_BATCH) {
+			end = (addr | ~PUD_MASK) + 1;
+			goto done;
+		}
 	}
 
-	return 0;
+	if (i < PTRS_PER_PUD && get_next_vma(P4D_MASK, PUD_SIZE, args, &start, &end))
+		goto restart;
+
+	end = round_up(end, P4D_SIZE);
+done:
+	if (!end || !args->vma)
+		return 1;
+
+	walk->next_addr = max(end, args->vma->vm_start);
+
+	return -EAGAIN;
 }
 
 static void walk_mm(struct lruvec *lruvec, struct mm_struct *mm, struct lru_gen_mm_walk *walk)
 {
 	struct mm_walk mm_walk_args = {
 		.test_walk = should_skip_vma,
-		.pud_entry = walk_pud_range,
+		.p4d_entry = walk_pud_range,
 		.mm = mm,
 		.private = walk,
 	};
