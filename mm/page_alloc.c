@@ -6798,7 +6798,7 @@ static void pgdat_init_kcompactd(struct pglist_data *pgdat) {}
 
 static void __meminit pgdat_init_internals(struct pglist_data *pgdat)
 {
-	enum zone_type i;
+	int i;
 
 	pgdat_resize_init(pgdat);
 

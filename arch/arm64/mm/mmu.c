@@ -1496,3 +1496,12 @@ int pud_free_pmd_page(pud_t *pudp, unsigned long addr)
 	pmd_free(NULL, table);
 	return 1;
 }
+
+#ifdef CONFIG_HAVE_RCU_TABLE_FREE
+/*
+ * arm64 frees the page table immediately (__tlb_remove_table()) and its TLB
+ * maintenance is performed architecturally during flush, so no additional
+ * synchronization is required when khugepaged frees a collapsed pmd.
+ */
+void tlb_remove_table_sync_one(void) { }
+#endif

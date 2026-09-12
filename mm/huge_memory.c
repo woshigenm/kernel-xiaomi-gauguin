@@ -1244,7 +1244,7 @@ static vm_fault_t do_huge_pmd_wp_page_fallback(struct vm_fault *vmf,
 	for (i = 0; i < HPAGE_PMD_NR; i++, haddr += PAGE_SIZE) {
 		pte_t entry;
 		entry = mk_pte(pages[i], vma->vm_page_prot);
-		entry = maybe_mkwrite(pte_mkdirty(entry), vma);
+		entry = maybe_mkwrite(pte_mkdirty(entry), vma->vm_flags);
 		memcg = (void *)page_private(pages[i]);
 		set_page_private(pages[i], 0);
 		page_add_new_anon_rmap(pages[i], vmf->vma, haddr, false);
@@ -2433,7 +2433,7 @@ static void unmap_page(struct page *page)
 	if (PageAnon(page))
 		ttu_flags |= TTU_SPLIT_FREEZE;
 
-	try_to_unmap(page, ttu_flags);
+	try_to_unmap(page, ttu_flags, NULL);
 
 	VM_WARN_ON_ONCE_PAGE(page_mapped(page), page);
 }
@@ -2830,6 +2830,17 @@ void free_transhuge_page(struct page *page)
 		list_del(page_deferred_list(page));
 	}
 	spin_unlock_irqrestore(&pgdata->split_queue_lock, flags);
+	/*
+	 * An anonymous THP activated on the LRU can still carry PG_active when
+	 * it is torn down whole (e.g. madvise(DONTNEED) via zap_page_range ->
+	 * free_pages_and_swap_cache), and since it is freed directly rather than
+	 * being deactivated first, PG_active is never cleared on this path.
+	 * 4.19's PAGE_FLAGS_CHECK_AT_FREE then flags it as a Bad page once the
+	 * refcount reaches 0 (a false positive; count/mapcount are consistent).
+	 * Clear it here so the strict check still fires for real (non-THP) LRU
+	 * corruption instead of being drowned out by THP teardown noise.
+	 */
+	__ClearPageActive(page);
 	free_compound_page(page);
 }
 
