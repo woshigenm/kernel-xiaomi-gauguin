@@ -43,3 +43,17 @@ config DAMON_RECLAIM
 	  This is suggested to be used when the memory is wasted or the
 	  reclaiming of the cold pages is required but the huge CPU and memory
 	  footprints of direct reclamation are not desired.
+
+config DAMON_LRU_SORT
+	bool "Build DAMON-based LRU lists sorting"
+	depends on DAMON_PADDR
+	help
+	  This builds a DAMON-based module that sorts cold and hot regions on
+	  LRU lists.  Damon-reclaim is recommended to be used when an access
+	  pattern is not apparent for every cold region but the latency of
+	  reclaiming a page is critical.  Instead, if the access pattern is
+	  datable and the latency is able to be covered, on a particular LRU
+	  list, DAMON-based LRU sorting is recommended.
+
+	  This module sorts cold and hot regions on LRU lists regardless of the
+	  memory pressure.
